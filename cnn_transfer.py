@@ -16,6 +16,7 @@ batch_size = 4
 n_epochs = 5
 min_val_loss = np.Infinity
 epochs_no_improve = 0
+n_epochs_stop = 2
 
 #other parameters
 MODEL_PATH = 'checkpoints/best_model.mdl'
@@ -46,18 +47,23 @@ image_transforms = {
     ]),
 }
 
+
+
 # Datasets from folders
 data = {
     'train':
     datasets.ImageFolder(root=traindir, transform=image_transforms['train']),
     'valid':
     datasets.ImageFolder(root=validdir, transform=image_transforms['valid']),
+    'test':
+    datasets.ImageFolder(root=testdir, transform=image_transforms['valid'])
 }
 
 # Dataloader iterators, make sure to shuffle
 dataloaders = {
     'train': DataLoader(data['train'], batch_size=batch_size, shuffle=True),
-    'val': DataLoader(data['valid'], batch_size=batch_size, shuffle=True)
+    'valid': DataLoader(data['valid'], batch_size=batch_size, shuffle=True),
+    'test': DataLoader(data['test'], batch_size=batch_size, shuffle=True)
 }
 
 """load resnet18 model pretrained"""
@@ -75,27 +81,49 @@ model = model.to('cuda')
 model = nn.DataParallel(model)
 
 # loss and optimizer
-criterion = nn.NLLLoss()
-optimizer = optim.Adam(model.pa())
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.parameters())
 
 for epoch in range(n_epochs):
 	val_loss = 0
 
 	#training
 	for data, targets in dataloaders['train']:
+		data = data.to('cuda')
+		targets = targets.to('cuda')
 		out = model(data)
 		loss = criterion(out, targets)
 		loss.backward()
 		optimizer.step()
 	
 	#validating
-	for data, targets in dataloaders['val']:
+	for data, targets in dataloaders['valid']:
+		data = data.to('cuda')
+		targets = targets.to('cuda')
 		out = model(data)
 		loss = criterion(out, targets)
 		val_loss += loss
 
 	#average validation loss
-	val_loss = val_loss/len(DataLoader['train'])
+	val_loss = val_loss/len(dataloaders['train'])
 
 	if val_loss < min_val_loss:
 		torch.save(model, MODEL_PATH)
+		epochs_no_improve = 0
+		min_val_loss = val_loss
+	else:
+		epochs_no_improve += 1
+		if epochs_no_improve == n_epochs_stop:
+			print("early stopping")
+			model = torch.load(MODEL_PATH)
+			break
+
+for data, targets in dataloaders['test']:
+	data = data.to('cuda')
+	log_ps = model(data)
+	targets = targets.to('cuda')
+	#convert predictions to probabilities
+	ps = torch.exp(log_ps)
+	pred = torch.max(ps, dim=1)
+	equals = pred == targets
+	accuracy = torch.mean(equals)
