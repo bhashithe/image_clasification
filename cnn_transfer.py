@@ -13,10 +13,10 @@ validdir = f'{rootdata}/valid/'
 
 # non trainable params
 batch_size = 4
-n_epochs = 5
+n_epochs = 50
 min_val_loss = np.Infinity
 epochs_no_improve = 0
-n_epochs_stop = 2
+n_epochs_stop = 5
 
 #other parameters
 MODEL_PATH = 'checkpoints/best_model.mdl'
@@ -117,13 +117,19 @@ for epoch in range(n_epochs):
 			print("early stopping")
 			model = torch.load(MODEL_PATH)
 			break
+	
+	print(f'epoch: {epoch} => loss: {val_loss}')
 
+val_accuracy = []
 for data, targets in dataloaders['test']:
 	data = data.to('cuda')
 	log_ps = model(data)
 	targets = targets.to('cuda')
 	#convert predictions to probabilities
 	ps = torch.exp(log_ps)
-	pred = torch.max(ps, dim=1)
+	pred = torch.argmax(ps, dim=1)
 	equals = pred == targets
+	equals = torch.tensor(equals, dtype=torch.float32)
 	accuracy = torch.mean(equals)
+	val_accuracy.append(accuracy)
+
