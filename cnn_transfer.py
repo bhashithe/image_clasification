@@ -1,3 +1,4 @@
+import time
 import numpy as np
 from torchvision import transforms, datasets, models
 import torch
@@ -16,7 +17,7 @@ batch_size = 4
 n_epochs = 50
 min_val_loss = np.Infinity
 epochs_no_improve = 0
-n_epochs_stop = 5
+n_epochs_stop = 10
 
 #other parameters
 MODEL_PATH = 'checkpoints/best_model.mdl'
@@ -86,6 +87,7 @@ optimizer = optim.Adam(model.parameters())
 
 for epoch in range(n_epochs):
 	val_loss = 0
+	start = time.time()
 
 	#training
 	for data, targets in dataloaders['train']:
@@ -118,7 +120,8 @@ for epoch in range(n_epochs):
 			model = torch.load(MODEL_PATH)
 			break
 	
-	print(f'epoch: {epoch} => loss: {val_loss}')
+	end = time.time()
+	print(f'epoch: {epoch} => loss: {val_loss}, time: %.2f'%(end-start))
 
 val_accuracy = []
 for data, targets in dataloaders['test']:
