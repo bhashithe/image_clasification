@@ -1,9 +1,12 @@
 import time
+import os
+import copy
 import numpy as np
 from torchvision import transforms, datasets, models
 import torch
 from torch.utils.data import DataLoader
 from torch import nn, optim
+from torch.optim import lr_scheduler
 
 
 #data directories
@@ -13,14 +16,12 @@ testdir = f'{rootdata}/test/'
 validdir = f'{rootdata}/valid/'
 
 # non trainable params
-batch_size = 4
-n_epochs = 50
-min_val_loss = np.Infinity
-epochs_no_improve = 0
-n_epochs_stop = 10
+batch_size = 10
+n_epochs = 1
 
 #other parameters
 MODEL_PATH = 'checkpoints/best_model.mdl'
+device='cuda:0'
 
 """
 aggregate the number of images using transformations
@@ -67,72 +68,101 @@ dataloaders = {
     'test': DataLoader(data['test'], batch_size=batch_size, shuffle=True)
 }
 
-"""load resnet18 model pretrained"""
-model = models.resnet18(pretrained=True)
+dataset_sizes = {x: len(data[x]) for x in ['train', 'valid']}
+
+def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
+    since = time.time()
+
+    best_model_wts = copy.deepcopy(model.state_dict())
+    best_acc = 0.0
+
+    for epoch in range(num_epochs):
+        print('Epoch {}/{}'.format(epoch, num_epochs - 1))
+        print('-' * 10)
+
+        # Each epoch has a training and validation phase
+        for phase in ['train', 'valid']:
+            if phase == 'train':
+                scheduler.step()
+                model.train()  # Set model to training mode
+            else:
+                model.eval()   # Set model to evaluate mode
+
+            running_loss = 0.0
+            running_corrects = 0
+
+            # Iterate over data.
+            for inputs, labels in dataloaders[phase]:
+                inputs = inputs.to(device)
+                labels = labels.to(device)
+
+                # zero the parameter gradients
+                optimizer.zero_grad()
+
+                # forward
+                # track history if only in train
+                with torch.set_grad_enabled(phase == 'train'):
+                    outputs = model(inputs)
+                    _, preds = torch.max(outputs, 1)
+                    loss = criterion(outputs, labels)
+
+                    # backward + optimize only if in training phase
+                    if phase == 'train':
+                        loss.backward()
+                        optimizer.step()
+
+                # statistics
+                running_loss += loss.item() * inputs.size(0)
+                running_corrects += torch.sum(preds == labels.data)
+
+            epoch_loss = running_loss / dataset_sizes[phase]
+            epoch_acc = running_corrects.double() / dataset_sizes[phase]
+
+            print('{} Loss: {:.4f} Acc: {:.4f}'.format(
+                phase, epoch_loss, epoch_acc))
+
+            # deep copy the model
+            if phase == 'valid' and epoch_acc > best_acc:
+                best_acc = epoch_acc
+                best_model_wts = copy.deepcopy(model.state_dict())
+
+        print()
+
+    time_elapsed = time.time() - since
+    print('Training complete in {:.0f}m {:.0f}s'.format(
+        time_elapsed // 60, time_elapsed % 60))
+    print('Best val Acc: {:4f}'.format(best_acc))
+
+    # load best model weights
+    model.load_state_dict(best_model_wts)
+    return model
+
+model_ft = models.resnet34(pretrained=True)
+#model_ft = models.resnet18(pretrained=True)
+num_ftrs = model_ft.fc.in_features
+model_ft.fc = nn.Linear(num_ftrs, 2)
+
+model_ft = model_ft.to('cuda:0')
+
+criterion = nn.CrossEntropyLoss()
+
+# Observe that all parameters are being optimized
+optimizer_ft = optim.SGD(model_ft.parameters(), lr=0.001, momentum=0.9)
+
+# Decay LR by a factor of 0.1 every 7 epochs
+exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=7, gamma=0.1)
 
 #freeze parameters
-for param in model.parameters():
+for param in model_ft.parameters():
 	param.requires_grad = False
 
 # 512 is coming from the preetrained model
 # out_features are depending on our classes
-model.fc = nn.Linear(in_features=512, out_features=2)
+model_ft.fc = nn.Linear(in_features=512, out_features=2)
 
-model = model.to('cuda')
-model = nn.DataParallel(model)
+model_ft = model_ft.to('cuda')
+model_ft = nn.DataParallel(model_ft)
 
-# loss and optimizer
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters())
+model_ft = train_model(model_ft, criterion, optimizer_ft, exp_lr_scheduler, num_epochs=50)
 
-for epoch in range(n_epochs):
-	val_loss = 0
-	start = time.time()
-
-	#training
-	for data, targets in dataloaders['train']:
-		data = data.to('cuda')
-		targets = targets.to('cuda')
-		out = model(data)
-		loss = criterion(out, targets)
-		loss.backward()
-		optimizer.step()
-	
-	#validating
-	for data, targets in dataloaders['valid']:
-		data = data.to('cuda')
-		targets = targets.to('cuda')
-		out = model(data)
-		loss = criterion(out, targets)
-		val_loss += loss
-
-	#average validation loss
-	val_loss = val_loss/len(dataloaders['train'])
-
-	if val_loss < min_val_loss:
-		torch.save(model, MODEL_PATH)
-		epochs_no_improve = 0
-		min_val_loss = val_loss
-	else:
-		epochs_no_improve += 1
-		if epochs_no_improve == n_epochs_stop:
-			print("early stopping")
-			model = torch.load(MODEL_PATH)
-			break
-	
-	end = time.time()
-	print(f'epoch: {epoch} => loss: {val_loss}, time: %.2f'%(end-start))
-
-val_accuracy = []
-for data, targets in dataloaders['test']:
-	data = data.to('cuda')
-	log_ps = model(data)
-	targets = targets.to('cuda')
-	#convert predictions to probabilities
-	ps = torch.exp(log_ps)
-	pred = torch.argmax(ps, dim=1)
-	equals = pred == targets
-	equals = torch.tensor(equals, dtype=torch.float32)
-	accuracy = torch.mean(equals)
-	val_accuracy.append(accuracy)
-
+torch.save(model_ft, 'checkpoints/best_model.mdl')
