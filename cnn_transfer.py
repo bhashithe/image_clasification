@@ -113,6 +113,7 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
 
                 # statistics
                 running_loss += loss.item() * inputs.size(0)
+                print(preds)
                 running_corrects += torch.sum(preds == labels.data)
 
             epoch_loss = running_loss / dataset_sizes[phase]
@@ -154,7 +155,7 @@ exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=7, gamma=0.1)
 
 #freeze parameters
 for param in model_ft.parameters():
-	param.requires_grad = False
+    param.requires_grad = False
 
 # 512 is coming from the preetrained model
 # out_features are depending on our classes
@@ -163,6 +164,6 @@ model_ft.fc = nn.Linear(in_features=512, out_features=2)
 model_ft = model_ft.to('cuda')
 model_ft = nn.DataParallel(model_ft)
 
-model_ft = train_model(model_ft, criterion, optimizer_ft, exp_lr_scheduler, num_epochs=50)
+model_ft = train_model(model_ft, criterion, optimizer_ft, exp_lr_scheduler, num_epochs=1)
 
 torch.save(model_ft, 'checkpoints/best_model.mdl')
